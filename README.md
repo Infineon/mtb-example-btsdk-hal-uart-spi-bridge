@@ -1,0 +1,1 @@
+# mtb-example-btsdk-hal-uart-spi-bridge
