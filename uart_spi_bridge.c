@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2022, Cypress Semiconductor Corporation (an Infineon company) or
+ * Copyright 2016-2023, Cypress Semiconductor Corporation (an Infineon company) or
  * an affiliate of Cypress Semiconductor Corporation.  All rights reserved.
  *
  * This software, including source code, documentation and related
@@ -110,6 +110,8 @@ uint8_t         hci_control_proc_rx_cmd( uint8_t *p_data, uint32_t length );
 
 extern uint8_t spi_master_handle_tx_and_rx( uint32_t event );
 extern void hci_puart_init( void );
+extern void spi_master_toggle_gpio( uint8_t count );
+extern void spi_master_configure_gpio(void);
 
 /******************************************************
  *               Function Definitions
@@ -120,6 +122,8 @@ extern void hci_puart_init( void );
  */
 APPLICATION_START( )
 {
+    spi_master_configure_gpio();
+
     wiced_bt_stack_init( hci_bridge_management_callback ,  &hci_bridge_cfg_settings, hci_bridge_cfg_buf_pools);
 }
 
@@ -134,7 +138,6 @@ wiced_result_t hci_bridge_management_callback( wiced_bt_management_evt_t event, 
         /* Bluetooth  stack enabled */
         case BTM_ENABLED_EVT:
             gpio_initialized = TRUE;
-            SPI_CLOCK_SPEED = 8000000;
             spi_master_init();
             spi_register_tx_rx_handler(spi_master_handle_tx_and_rx);
             spi_master_register_data_received_cb(hci_bridge_spi_master_data_received);

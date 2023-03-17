@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2022, Cypress Semiconductor Corporation (an Infineon company) or
+ * Copyright 2016-2023, Cypress Semiconductor Corporation (an Infineon company) or
  * an affiliate of Cypress Semiconductor Corporation.  All rights reserved.
  *
  * This software, including source code, documentation and related
@@ -55,7 +55,7 @@
 **           Macros
 **************************************************************/
 
-uint32_t SPI_CLOCK_SPEED = (2000000);
+uint32_t SPI_CLOCK_SPEED = (4000000);
 
 #define SPI_TX_BUFFER_SIZE                  1024
 #define SPI_TX_BUFFER_COUNT                 5
@@ -74,8 +74,8 @@ uint32_t SPI_CLOCK_SPEED = (2000000);
                                           ( packet_type == TRAN_PKT_HCI_EVENT ))
 #define HOST_BT_DEV_READY_GPIO              WICED_P12
 #define SPI_CS_GPIO                         WICED_P26
-#define MASTER_DEBUG_GPIO                   WICED_P03
-
+#define MASTER_DEBUG_GPIO                   WICED_P02
+#define MASTER_DEBUG_SECTION_GPIO           WICED_P15
 
 /**************************************************************
 **           Variable Definitons
@@ -114,6 +114,8 @@ extern spi_mode_t spi_mode;
 **************************************************************/
 
 void spi_master_toggle_gpio( uint8_t count );
+void utilslib_delayUs(uint32_t delay);
+
 
 /**************************************************************
 **           Function Definitions
@@ -149,19 +151,52 @@ void spi_master_dev_ready_interrupt_handler( void *data, uint8_t port_pin )
     {
         wiced_hal_gpio_clear_pin_interrupt_status( HOST_BT_DEV_READY_GPIO );
     }
-    spi_master_toggle_gpio(1);
+    spi_master_toggle_gpio(0);
     spi_set_event(SPI_DEV_READY_EVENT);
 }
 
 void spi_master_toggle_gpio( uint8_t count )
 {
     uint8_t index;
+
+    wiced_hal_gpio_set_pin_output(MASTER_DEBUG_SECTION_GPIO, 1);
     for ( index = 0; index < count; index++ )
     {
         wiced_hal_gpio_set_pin_output(MASTER_DEBUG_GPIO, 1);
         wiced_hal_gpio_set_pin_output(MASTER_DEBUG_GPIO, 0);
     }
+    wiced_hal_gpio_set_pin_output(MASTER_DEBUG_SECTION_GPIO, 0);
 }
+
+void gpio_print_value(uint32_t bits, uint32_t value)
+{
+    wiced_hal_gpio_set_pin_output(MASTER_DEBUG_GPIO, GPIO_PIN_OUTPUT_LOW);
+    wiced_hal_gpio_set_pin_output(MASTER_DEBUG_SECTION_GPIO, GPIO_PIN_OUTPUT_HIGH);
+
+    utilslib_delayUs(200);
+
+    for( int i = (bits-1); i >= 0; i--)
+    {
+        wiced_hal_gpio_set_pin_output(MASTER_DEBUG_SECTION_GPIO, GPIO_PIN_OUTPUT_LOW);
+        if((value >> i) & 0x01)
+        {
+            wiced_hal_gpio_set_pin_output(MASTER_DEBUG_GPIO, GPIO_PIN_OUTPUT_HIGH);
+        }
+        else
+        {
+            wiced_hal_gpio_set_pin_output(MASTER_DEBUG_GPIO, GPIO_PIN_OUTPUT_LOW);
+        }
+//        utilslib_delayUs(100);
+        wiced_hal_gpio_set_pin_output(MASTER_DEBUG_SECTION_GPIO, GPIO_PIN_OUTPUT_HIGH);
+//        utilslib_delayUs(100);
+//        value = value >> 1;
+    }
+
+    wiced_hal_gpio_set_pin_output(MASTER_DEBUG_GPIO, GPIO_PIN_OUTPUT_LOW);
+    wiced_hal_gpio_set_pin_output(MASTER_DEBUG_SECTION_GPIO, GPIO_PIN_OUTPUT_LOW);
+    utilslib_delayUs(200);
+}
+
 
 void spi_master_assert_cs(void)
 {
@@ -182,10 +217,12 @@ void spi_master_configure_gpio(void)
 
     wiced_hal_gpio_configure_pin(SPI_CS_GPIO, GPIO_OUTPUT_ENABLE, GPIO_PIN_OUTPUT_HIGH );//chip select
     wiced_hal_gpio_configure_pin(MASTER_DEBUG_GPIO, GPIO_OUTPUT_ENABLE, GPIO_PIN_OUTPUT_LOW ); //debug purpose
+    wiced_hal_gpio_configure_pin(MASTER_DEBUG_SECTION_GPIO, GPIO_OUTPUT_ENABLE, GPIO_PIN_OUTPUT_LOW ); //debug purpose
 }
 
 void spi_master_init( void )
 {
+    uint32_t value;
     INIT_SLIST_NODE(&spi_master_info.spi_tx_data_q);
     INIT_SLIST_NODE(&spi_master_info.spi_rx_data_q);
     wiced_hal_pspi_init( MASTER1_CONFIG,
@@ -196,7 +233,7 @@ void spi_master_init( void )
                          SPI_SS_ACTIVE_LOW,
                          SPI_MODE_0,
                          SPI_CS_GPIO);
-    spi_master_configure_gpio();
+
     spi_master_buffer_init(SPI_TX_BUFFER_SIZE, SPI_RX_BUFFER_SIZE, SPI_TX_BUFFER_COUNT, SPI_RX_BUFFER_COUNT);
     spi_master_setup_audio_data(); //Testing audio
 }
@@ -248,25 +285,63 @@ void spi_master_clear_rx_fifo( void )
 //Blocking read
 void spi_master_start_tx( uint8_t* p_data, uint32_t length )
 {
-    spi_master_clear_tx_fifo();
+    uint32_t value;
+    uint32_t i;
 
-    spi_master_assert_cs();
-    spiffyd_txData(0,length , p_data);
-    spi_master_deassert_cs();
+    if(length && (p_data != NULL))
+    {
+        spi_master_clear_tx_fifo();
 
-    spi_master_toggle_gpio(2);
+        REG32(spiffy_cfg_adr) &= ~(SPIFFY_CFG_TX_FIFO_EN | SPIFFY_CFG_RX_FIFO_EN | SPIFFY_CFG_FLOW_CONTROL_MASK);
+        REG32(spiffy_cfg_adr) |= (SPIFFY_CFG_TX_FIFO_EN | SPIFFY_CFG_FLOW_CONTROL_TX);
 
-    spi_master_clear_rx_fifo();
-    spi_set_event(SPI_TX_DMA_DONE_EVENT);
+        for( i = 0; i < length; i++ )
+        {
+            REG32(spiffy_TxFIFO_adr) = p_data[i];
+        }
+
+        spi_master_assert_cs();
+        REG32(spiffy_IntStatus_adr) |= SPIFFY_INT_GENERIC_SPI_MASTER_DONE;
+        REG32(spiffy_TransmissionLength_adr) = length;
+
+        do
+        {
+            value = REG32(spiffy_IntStatus_adr);
+        }while((value & SPIFFY_INT_GENERIC_SPI_MASTER_DONE) != SPIFFY_INT_GENERIC_SPI_MASTER_DONE);
+
+        spi_master_deassert_cs();
+
+        spi_master_clear_rx_fifo();
+
+        spi_set_event(SPI_TX_DMA_DONE_EVENT);
+    }
 }
 
 void spi_master_read_bytes( uint8_t* p_data, uint32_t length )
 {
-     //spi_master_assert_cs();
-     spi_master_toggle_gpio(3);
-     spiffyd_rxData(SPIFFYD_1, length, p_data );
-     //spi_master_deassert_cs();
-     spi_master_toggle_gpio(3);
+    uint32_t value;
+    uint32_t i;
+
+    if(length)
+    {
+        REG32(spiffy_cfg_adr) &= ~(SPIFFY_CFG_TX_FIFO_EN | SPIFFY_CFG_RX_FIFO_EN | SPIFFY_CFG_FLOW_CONTROL_MASK);
+        REG32(spiffy_cfg_adr) |= (SPIFFY_CFG_RX_FIFO_EN | SPIFFY_CFG_FLOW_CONTROL_RX);
+
+        REG32(spiffy_IntStatus_adr) |= SPIFFY_INT_GENERIC_SPI_MASTER_DONE;
+
+        REG32(spiffy_TransmissionLength_adr) = length;
+
+        do
+        {
+            value = REG32(spiffy_IntStatus_adr);
+        }while((value & SPIFFY_INT_GENERIC_SPI_MASTER_DONE) != SPIFFY_INT_GENERIC_SPI_MASTER_DONE);
+
+
+        for( i = 0; i < length; i++ )
+        {
+            p_data[i] = REG32(spiffy_RxFIFO_adr);
+        }
+    }
 }
 
 void spi_master_register_data_received_cb( spi_master_data_rx_cb_t p_cb )
@@ -277,7 +352,6 @@ void spi_master_register_data_received_cb( spi_master_data_rx_cb_t p_cb )
 void spi_master_tx_audio_data( uint8_t packet_count )
 {
     spi_master_info.audio_pending += packet_count;
-    spi_master_toggle_gpio(packet_count);
     spi_set_event(SPI_TX_AUDIO_DATA_EVENT);
 }
 
@@ -304,13 +378,272 @@ int spi_master_data_received_cback( void * data )
     return 0;
 }
 
+uint8_t spi_master_process_init_state(uint32_t *event)
+{
+    uint8_t status = FALSE;
+
+    if ( ( *event & SPI_DEV_READY_EVENT ) && !spi_master_info.audio_pending && slist_empty( &spi_master_info.spi_tx_data_q ) )
+    {
+        uint8_t wiced_hci_rx_command[] = { 0x19, 0x00, 0x00, 0x00, 0x00 };
+//        spi_master_toggle_gpio(1);
+        if ( wiced_hal_gpio_get_pin_input_status( HOST_BT_DEV_READY_GPIO ) == 1 )
+        {
+            // handle the case which SPI_DEV_READY_EVENT is out of sync
+            spi_master_info.spi_state = SPI_RX_WAIT_FOR_CMD_TRANSMIT_DONE_STATE;
+            spi_master_start_tx( wiced_hci_rx_command, WICED_HCI_HEADER_LENGTH );
+        }
+    }
+    else if ( ( *event & SPI_DEV_READY_EVENT ) && ( spi_master_info.audio_pending || !slist_empty( &spi_master_info.spi_tx_data_q ) ) )
+    {
+//        spi_master_toggle_gpio(2);
+        spi_master_info.spi_state = SPI_TX_HEADER_STATE;
+        status = TRUE;
+    }
+    else if (  spi_master_info.audio_pending || !slist_empty( &spi_master_info.spi_tx_data_q ) )
+    {
+//        spi_master_toggle_gpio(3);
+        if ( wiced_hal_gpio_get_pin_input_status( HOST_BT_DEV_READY_GPIO ) == 0 )
+        {
+//            spi_master_toggle_gpio(1);
+            spi_master_assert_cs();
+            spi_master_info.spi_state = SPI_TX_HEADER_STATE;
+        }
+    }
+
+    return status;
+}
+
+uint8_t spi_master_process_tx_header_state(uint32 *event)
+{
+    spi_master_data_t* p_tx_data;
+    uint8_t status = FALSE;
+
+    if ( *event & SPI_DEV_READY_EVENT )
+    {
+//        spi_master_toggle_gpio(1);
+        if ( spi_master_info.audio_pending )
+        {
+//            spi_master_toggle_gpio(1);
+            spi_master_info.p_tx_data = spi_audio_data;
+            spi_master_info.tx_packet_length = AUDIO_DATA_LENGTH;
+
+            spi_master_info.audio_pending--;
+            spi_master_info.spi_state = SPI_TX_WAIT_FOR_HEADER_TRANSMIT_DONE_STATE;
+            spi_master_start_tx( spi_master_info.p_tx_data, WICED_HCI_HEADER_LENGTH );
+        }
+        else if ( !slist_empty( &spi_master_info.spi_tx_data_q ) )
+        {
+//            spi_master_toggle_gpio(2);
+            spi_master_info.p_tx_node = slist_front( &spi_master_info.spi_tx_data_q );
+            slist_del( spi_master_info.p_tx_node, &spi_master_info.spi_tx_data_q );
+            p_tx_data = (spi_master_data_t*)spi_master_info.p_tx_node;
+            spi_master_info.tx_packet_length = p_tx_data->length;
+            spi_master_info.p_tx_data = p_tx_data->p_data;
+
+            spi_master_info.spi_state = SPI_TX_WAIT_FOR_HEADER_TRANSMIT_DONE_STATE;
+            spi_master_start_tx( spi_master_info.p_tx_data, WICED_HCI_HEADER_LENGTH );
+        }
+    }
+
+    return status;
+}
+
+uint8_t spi_master_process_wait_for_header_transmit_done_event(uint32_t *event)
+{
+    uint8_t status = FALSE;
+
+    if ( *event & SPI_TX_DMA_DONE_EVENT )
+    {
+//        spi_master_toggle_gpio(1);
+        //If payload available to be transmitted
+        if ( spi_master_info.tx_packet_length - WICED_HCI_HEADER_LENGTH )
+        {
+//            spi_master_toggle_gpio(1);
+            spi_master_info.spi_state = SPI_TX_PAYLOAD_WAIT_FOR_DEV_READY_STATE;
+        }
+        else
+        {
+//            spi_master_toggle_gpio(2);
+            *event = SPI_TX_DMA_DONE_EVENT;
+            status = TRUE;
+            spi_master_info.spi_state = SPI_TX_WAIT_FOR_PAYLOAD_TRANSMIT_DONE_STATE;
+        }
+    }
+
+    return status;
+}
+
+uint8_t spi_master_process_tx_payload_wait_for_device_ready_state(uint32_t *event)
+{
+    uint8_t status = FALSE;
+
+    if ( *event & SPI_DEV_READY_EVENT )
+    {
+//        spi_master_toggle_gpio(1);
+        spi_master_info.spi_state = SPI_TX_WAIT_FOR_PAYLOAD_TRANSMIT_DONE_STATE;
+        spi_master_start_tx( spi_master_info.p_tx_data+WICED_HCI_HEADER_LENGTH, spi_master_info.tx_packet_length-WICED_HCI_HEADER_LENGTH );
+    }
+
+    return status;
+}
+
+uint8_t spi_master_process_tx_wait_for_payload_transmit_done_state(uint32_t *event)
+{
+    uint8_t status = FALSE;
+
+    if ( *event & SPI_TX_DMA_DONE_EVENT )
+    {
+//        spi_master_toggle_gpio(1);
+        if ( spi_master_info.p_tx_node )
+        {
+            wiced_bt_free_buffer(spi_master_info.p_tx_node);
+        }
+        spi_master_info.p_tx_node = NULL;
+        *event = 0;
+        status = TRUE;
+        spi_master_info.spi_state = SPI_TX_DONE_STATE;
+    }
+
+    return status;
+}
+
+uint8_t spi_master_process_rx_wait_for_cmd_transmit_done_state(uint32_t *event)
+{
+    uint8_t status = FALSE;
+
+    if ( *event & SPI_TX_DMA_DONE_EVENT )
+    {
+        spi_master_toggle_gpio(1);
+        spi_master_info.spi_state = SPI_RX_WAIT_FOR_DATA_READ_START_STATE;
+    }
+
+    return status;
+}
+
+uint8_t spi_master_process_rx_wait_for_data_read_start_state(uint32_t *event)
+{
+    spi_master_data_t* p_rx_data;
+    slist_node_t* p_rx_node;
+    uint8_t status = FALSE;
+
+    if ( *event & SPI_DEV_READY_EVENT )
+    {
+        spi_master_toggle_gpio(1);
+        //Read the header from the slave
+        uint8_t packet_header[5];
+        spi_master_clear_rx_fifo();
+        spi_master_assert_cs();
+        spi_master_read_bytes(packet_header,5);
+        if ( PACKET_TYPE_VALID( packet_header[0] ) )
+        {
+            spi_master_toggle_gpio(1);
+            spi_master_info.rx_packet_length =
+            packet_header[3] | ( packet_header[4] << 8 );
+            p_rx_node = wiced_bt_get_buffer_from_pool( spi_master_info.p_spi_rx_buff_pool );
+            spi_master_info.p_rx_buf = (uint8_t*)p_rx_node;
+            if ( spi_master_info.p_rx_buf )
+            {
+                spi_master_toggle_gpio(1);
+                if ( spi_master_info.rx_packet_length + 5 + sizeof(spi_master_data_t) <= wiced_bt_get_buffer_size( spi_master_info.p_rx_buf ) )
+                {
+                    spi_master_toggle_gpio(1);
+                    //osapi_INIT_LOCK_CONTEXT
+                    spi_master_info.p_rx_buf += sizeof(spi_master_data_t);
+                    spi_master_read_bytes(spi_master_info.p_rx_buf+5,spi_master_info.rx_packet_length);
+                    spi_master_deassert_cs();
+                    memcpy( spi_master_info.p_rx_buf,packet_header, 5 );
+
+                    p_rx_data = (spi_master_data_t*)p_rx_node;
+                    p_rx_data->p_data = spi_master_info.p_rx_buf;
+                    p_rx_data->length = WICED_HCI_HEADER_LENGTH + spi_master_info.rx_packet_length;
+
+                    //osapi_LOCK_CONTEXT
+                    slist_add_tail(p_rx_node,&spi_master_info.spi_rx_data_q );
+                    //osapi_UNLOCK_CONTEXT
+                    wiced_app_event_serialize( spi_master_data_received_cback, NULL);
+                }
+                else
+                {
+//                    spi_master_toggle_gpio(2);
+                    wiced_bt_free_buffer(p_rx_node);
+                }
+            }
+        }
+        else
+        {
+            gpio_print_value(8, packet_header[0]);
+            gpio_print_value(8, packet_header[1]);
+            gpio_print_value(8, packet_header[2]);
+            gpio_print_value(8, packet_header[3]);
+            gpio_print_value(8, packet_header[4]);
+        }
+        spi_master_deassert_cs();
+        //Todo handle the failure scenarios
+        *event = 0;
+        status = TRUE;
+        spi_master_info.spi_state = SPI_RX_DONE_STATE;
+    }
+
+
+    return status;
+}
+
+uint8_t spi_master_process_tx_done_state(uint32_t *event)
+{
+    uint8_t status = FALSE;
+
+     if ( !(*event) )
+     {
+//         spi_master_toggle_gpio(1);
+         if ( spi_master_info.audio_pending )
+         {
+//             spi_master_toggle_gpio(1);
+             *event = SPI_TX_AUDIO_DATA_EVENT;
+             status = TRUE;
+         }
+         else if ( !slist_empty( &spi_master_info.spi_tx_data_q ) )
+         {
+//             spi_master_toggle_gpio(2);
+             *event = SPI_TX_DATA_EVENT;
+             status = TRUE;
+         }
+         spi_master_info.spi_state = SPI_INIT_STATE;
+    }
+
+    return status;
+}
+
+uint8_t spi_master_process_rx_done_state(uint32_t *event)
+{
+    uint8_t status = FALSE;
+
+     if ( !(*event) )
+     {
+//         spi_master_toggle_gpio(1);
+         if ( spi_master_info.audio_pending )
+         {
+//             spi_master_toggle_gpio(1);
+             *event = SPI_TX_AUDIO_DATA_EVENT;
+             status = TRUE;
+         }
+         else if ( !slist_empty( &spi_master_info.spi_tx_data_q ) )
+         {
+//             spi_master_toggle_gpio(2);
+             *event = SPI_TX_DATA_EVENT;
+             status = TRUE;
+         }
+         spi_master_info.spi_state = SPI_INIT_STATE;
+    }
+
+    return status;
+}
+
 
 uint8_t spi_master_handle_tx_and_rx( uint32_t event )
 {
-    spi_master_data_t* p_tx_data;
-    spi_master_data_t* p_rx_data;
-    slist_node_t* p_rx_node;
     uint8_t loop_continue = TRUE;
+
+//    spi_master_toggle_gpio(0);
 
     while ( loop_continue )
     {
@@ -318,168 +651,54 @@ uint8_t spi_master_handle_tx_and_rx( uint32_t event )
         switch ( spi_master_info.spi_state )
         {
             case SPI_INIT_STATE:
-                if ( ( event & SPI_DEV_READY_EVENT ) && !spi_master_info.audio_pending && slist_empty( &spi_master_info.spi_tx_data_q ) )
-                {
-                    uint8_t wiced_hci_rx_command[] = { 0x19, 0x00, 0x00, 0x00, 0x00 };
-                    spi_master_toggle_gpio(4);
-                    spi_master_info.spi_state = SPI_RX_WAIT_FOR_CMD_TRANSMIT_DONE_STATE;
-                    spi_master_start_tx( wiced_hci_rx_command, WICED_HCI_HEADER_LENGTH );
-                }
-                else if ( ( event & SPI_DEV_READY_EVENT ) && ( spi_master_info.audio_pending || !slist_empty( &spi_master_info.spi_tx_data_q ) ) )
-                {
-                    spi_master_toggle_gpio(5);
-                    spi_master_info.spi_state = SPI_TX_HEADER_STATE;
-                    loop_continue = TRUE;
-                }
-                else if (  spi_master_info.audio_pending || !slist_empty( &spi_master_info.spi_tx_data_q ) )
-                {
-                    spi_master_toggle_gpio(6);
-                    spi_master_assert_cs();
-                    spi_master_info.spi_state = SPI_TX_HEADER_STATE;
-                }
+                spi_master_toggle_gpio(1);
+                loop_continue = spi_master_process_init_state(&event);
                 break;
 
              case SPI_TX_HEADER_STATE:
-                if ( event & SPI_DEV_READY_EVENT )
-                {
-                    if ( spi_master_info.audio_pending )
-                    {
-                        spi_master_info.p_tx_data = spi_audio_data;
-                        spi_master_info.tx_packet_length = AUDIO_DATA_LENGTH;
+                spi_master_toggle_gpio(2);
 
-                        spi_master_info.audio_pending--;
-                        spi_master_info.spi_state = SPI_TX_WAIT_FOR_HEADER_TRANSMIT_DONE_STATE;
-                        spi_master_start_tx( spi_master_info.p_tx_data, WICED_HCI_HEADER_LENGTH );
-                    }
-                    else if ( !slist_empty( &spi_master_info.spi_tx_data_q ) )
-                    {
-                        spi_master_info.p_tx_node = slist_front( &spi_master_info.spi_tx_data_q );
-                        slist_del( spi_master_info.p_tx_node, &spi_master_info.spi_tx_data_q );
-                        p_tx_data = (spi_master_data_t*)spi_master_info.p_tx_node;
-                        spi_master_info.tx_packet_length = p_tx_data->length;
-                        spi_master_info.p_tx_data = p_tx_data->p_data;
-
-                        spi_master_info.spi_state = SPI_TX_WAIT_FOR_HEADER_TRANSMIT_DONE_STATE;
-                        spi_master_start_tx( spi_master_info.p_tx_data, WICED_HCI_HEADER_LENGTH );
-                    }
-                }
+                loop_continue = spi_master_process_tx_header_state(&event);
                 break;
             case SPI_TX_WAIT_FOR_HEADER_TRANSMIT_DONE_STATE:
-                if ( event & SPI_TX_DMA_DONE_EVENT )
-                {
-                    //If payload available to be transmitted
-                    if ( spi_master_info.tx_packet_length - WICED_HCI_HEADER_LENGTH )
-                    {
-                        spi_master_info.spi_state = SPI_TX_PAYLOAD_WAIT_FOR_DEV_READY_STATE;
-                    }
-                    else
-                    {
-                        event = SPI_TX_DMA_DONE_EVENT;
-                        loop_continue = TRUE;
-                        spi_master_info.spi_state = SPI_TX_WAIT_FOR_PAYLOAD_TRANSMIT_DONE_STATE;
-                    }
-                }
+                spi_master_toggle_gpio(3);
+                loop_continue = spi_master_process_wait_for_header_transmit_done_event(&event);
                 break;
 
             case SPI_TX_PAYLOAD_WAIT_FOR_DEV_READY_STATE:
-                if ( event & SPI_DEV_READY_EVENT )
-                {
-                    spi_master_info.spi_state = SPI_TX_WAIT_FOR_PAYLOAD_TRANSMIT_DONE_STATE;
-                    spi_master_start_tx( spi_master_info.p_tx_data+WICED_HCI_HEADER_LENGTH, spi_master_info.tx_packet_length-WICED_HCI_HEADER_LENGTH );
-                }
+                spi_master_toggle_gpio(4);
+                loop_continue = spi_master_process_tx_payload_wait_for_device_ready_state(&event);
                 break;
 
             case SPI_TX_WAIT_FOR_PAYLOAD_TRANSMIT_DONE_STATE:
-                if ( event & SPI_TX_DMA_DONE_EVENT )
-                {
-                    if ( spi_master_info.p_tx_node )
-                    {
-                        wiced_bt_free_buffer(spi_master_info.p_tx_node);
-                    }
-                    spi_master_info.p_tx_node = NULL;
-                    event = 0;
-                    loop_continue = TRUE;
-                    spi_master_info.spi_state = SPI_TX_DONE_STATE;
-                }
+                spi_master_toggle_gpio(5);
+                loop_continue = spi_master_process_tx_wait_for_payload_transmit_done_state(&event);
                 break;
 
             case SPI_RX_WAIT_FOR_CMD_TRANSMIT_DONE_STATE:
-                if ( event & SPI_TX_DMA_DONE_EVENT )
-                {
-                    spi_master_info.spi_state = SPI_RX_WAIT_FOR_DATA_READ_START_STATE;
-                }
+                spi_master_toggle_gpio(6);
+                loop_continue = spi_master_process_rx_wait_for_cmd_transmit_done_state(&event);
                 break;
 
             case SPI_RX_WAIT_FOR_DATA_READ_START_STATE:
-                if ( event & SPI_DEV_READY_EVENT )
-                {
-                    //Read the header from the slave
-                    uint8_t packet_header[5];
-                    spi_master_clear_rx_fifo();
-                    spi_master_assert_cs();
-                    spi_master_read_bytes(packet_header,5);
-                    if ( PACKET_TYPE_VALID( packet_header[0] ) )
-                    {
-                        spi_master_info.rx_packet_length =
-                            packet_header[3] | ( packet_header[4] << 8 );
-                        p_rx_node = wiced_bt_get_buffer_from_pool( spi_master_info.p_spi_rx_buff_pool );
-                        spi_master_info.p_rx_buf = (uint8_t*)p_rx_node;
-                        if ( spi_master_info.p_rx_buf )
-                        {
-                            if ( spi_master_info.rx_packet_length + 5 + sizeof(spi_master_data_t) <= wiced_bt_get_buffer_size( spi_master_info.p_rx_buf ) )
-                            {
-                                //osapi_INIT_LOCK_CONTEXT
-                                spi_master_info.p_rx_buf += sizeof(spi_master_data_t);
-                                spi_master_read_bytes(spi_master_info.p_rx_buf+5,spi_master_info.rx_packet_length);
-                                spi_master_deassert_cs();
-                                memcpy( spi_master_info.p_rx_buf,packet_header, 5 );
-
-                                p_rx_data = (spi_master_data_t*)p_rx_node;
-                                p_rx_data->p_data = spi_master_info.p_rx_buf;
-                                p_rx_data->length = WICED_HCI_HEADER_LENGTH + spi_master_info.rx_packet_length;
-
-                                //osapi_LOCK_CONTEXT
-                                slist_add_tail(p_rx_node,&spi_master_info.spi_rx_data_q );
-                                //osapi_UNLOCK_CONTEXT
-                                wiced_app_event_serialize( spi_master_data_received_cback, NULL);
-                            }
-                            else
-                            {
-                                wiced_bt_free_buffer(p_rx_node);
-                            }
-                        }
-                    }
-                    spi_master_deassert_cs();
-                    //Todo handle the failure scenarios
-                    event = 0;
-                    loop_continue = TRUE;
-                    spi_master_info.spi_state = SPI_RX_DONE_STATE;
-               }
-               break;
+                spi_master_toggle_gpio(7);
+                loop_continue = spi_master_process_rx_wait_for_data_read_start_state(&event);
+                break;
 
             case SPI_TX_DONE_STATE:
+                spi_master_toggle_gpio(8);
+                loop_continue = spi_master_process_tx_done_state(&event);
+                break;
             case SPI_RX_DONE_STATE:
-                if ( !event )
-                {
-                    if ( spi_master_info.audio_pending )
-                    {
-                        event = SPI_TX_AUDIO_DATA_EVENT;
-                        loop_continue = TRUE;
-                    }
-                    else if ( !slist_empty( &spi_master_info.spi_tx_data_q ) )
-                    {
-                        event = SPI_TX_DATA_EVENT;
-                        loop_continue = TRUE;
-                    }
-                    spi_master_info.spi_state = SPI_INIT_STATE;
-                    spi_master_toggle_gpio(10);
-               }
+                spi_master_toggle_gpio(9);
+                loop_continue = spi_master_process_rx_done_state(&event);
                break;
 
             default:
-                spi_master_toggle_gpio(15);
+//                spi_master_toggle_gpio(100);
                 break;
         }
+//        spi_master_toggle_gpio(40);
     }
     return 0;
 }

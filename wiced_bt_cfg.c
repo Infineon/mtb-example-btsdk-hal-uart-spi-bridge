@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2022, Cypress Semiconductor Corporation (an Infineon company) or
+ * Copyright 2016-2023, Cypress Semiconductor Corporation (an Infineon company) or
  * an affiliate of Cypress Semiconductor Corporation.  All rights reserved.
  *
  * This software, including source code, documentation and related
@@ -64,9 +64,9 @@ const wiced_bt_cfg_settings_t hci_bridge_cfg_settings =
         .page_scan_window                = WICED_BT_CFG_DEFAULT_PAGE_SCAN_WINDOW                     // Page scan window (0 to use default)
     },
 
-    .ble_scan_cfg =                                                                                  // BLE scan settings
+    .ble_scan_cfg =                                                                                  // LE scan settings
     {
-        .scan_mode                       = BTM_BLE_SCAN_MODE_ACTIVE,                                 // BLE scan mode (BTM_BLE_SCAN_MODE_PASSIVE, BTM_BLE_SCAN_MODE_ACTIVE, or BTM_BLE_SCAN_MODE_NONE)
+        .scan_mode                       = BTM_BLE_SCAN_MODE_ACTIVE,                                 // LE scan mode (BTM_BLE_SCAN_MODE_PASSIVE, BTM_BLE_SCAN_MODE_ACTIVE, or BTM_BLE_SCAN_MODE_NONE)
 
         .high_duty_scan_interval         = 96,                                                       // High duty scan interval
         .high_duty_scan_window           = 48,                                                       // High duty scan window
@@ -92,7 +92,7 @@ const wiced_bt_cfg_settings_t hci_bridge_cfg_settings =
         .conn_supervision_timeout        = WICED_BT_CFG_DEFAULT_CONN_SUPERVISION_TIMEOUT              // Connection link supervsion timeout
     },
 
-    .ble_advert_cfg =                                                                                // BLE advertisement settings
+    .ble_advert_cfg =                                                                                // LE advertisement settings
     {
         .channel_map                     = BTM_BLE_ADVERT_CHNL_37 |                                  // Advertising channel map (mask of BTM_BLE_ADVERT_CHNL_37, BTM_BLE_ADVERT_CHNL_38, BTM_BLE_ADVERT_CHNL_39)
                                            BTM_BLE_ADVERT_CHNL_38 |
@@ -132,7 +132,7 @@ const wiced_bt_cfg_settings_t hci_bridge_cfg_settings =
 
     .rfcomm_cfg =                                                                                    // RFCOMM configuration
     {
-        .max_links                      = 7,                                                         // Maximum number of simultaneous connected remote devices*/
+        .max_links                      = 7,                                                         // Maximum number of simultaneous connected remote devices
         .max_ports                      = 7                                                          // Maximum number of simultaneous RFCOMM ports
     },
 
