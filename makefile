@@ -1,5 +1,5 @@
 #
-# Copyright 2016-2023, Cypress Semiconductor Corporation (an Infineon company) or
+# Copyright 2016-2024, Cypress Semiconductor Corporation (an Infineon company) or
 # an affiliate of Cypress Semiconductor Corporation.  All rights reserved.
 #
 # This software, including source code, documentation and related
@@ -88,6 +88,9 @@ CY_APP_DEFINES+=\
 # Components (middleware libraries)
 #
 COMPONENTS +=bsp_design_modus
+
+# patch libraries to install
+CY_20706A2_APP_PATCH_LIBS += spiffy_lib.a wiced_spi_lib.a
 
 ################################################################################
 # Paths
